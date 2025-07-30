@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  service-monitor:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./config:/app/config
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
