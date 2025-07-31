@@ -181,6 +181,11 @@ async function loadNotifications() {
         authToken: '',
         from: '',
         to: ''
+      },
+      iphone: {
+        enabled: false,
+        webhookUrl: '',
+        description: 'iPhone Shortcuts webhook for SMS forwarding'
       }
     };
   }
@@ -613,6 +618,41 @@ async function sendSmsNotification(service, notifications) {
   }
 }
 
+// Send iPhone webhook notification
+async function sendIphoneNotification(service, notifications) {
+  if (!notifications.iphone.enabled || !notifications.iphone.webhookUrl) {
+    logger.debug('iPhone notifications not enabled or webhook URL not set');
+    return;
+  }
+  
+  try {
+    const payload = {
+      title: `Service Monitor Alert`,
+      text: `${service.name} is ${service.status.toUpperCase()}${service.error ? `\nError: ${service.error}` : `\nResponse time: ${service.responseTime}ms`}\nURL: ${service.url}`,
+      input: {
+        service: service.name,
+        status: service.status,
+        url: service.url,
+        error: service.error || null,
+        responseTime: service.responseTime,
+        timestamp: service.lastChecked
+      }
+    };
+    
+    const response = await axios.post(notifications.iphone.webhookUrl, payload, {
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'ServiceMonitor/1.0'
+      },
+      timeout: 10000
+    });
+    
+    logger.info(`iPhone webhook notification sent for service: ${service.name}, Status: ${response.status}`);
+  } catch (error) {
+    logger.error('Error sending iPhone webhook notification: ' + error.message);
+  }
+}
+
 // Send all enabled notifications
 async function sendNotifications(service, previousStatus) {
   logger.info(`sendNotifications called for service: ${service.name}`);
@@ -668,6 +708,14 @@ async function sendNotifications(service, previousStatus) {
     await sendSmsNotification(service, notifications);
   } else {
     logger.info(`SMS notifications disabled, skipping SMS notification for ${service.name}`);
+  }
+  
+  // Send iPhone webhook notification
+  if (notifications.iphone.enabled) {
+    logger.info(`iPhone notifications enabled, attempting to send iPhone webhook notification for ${service.name}`);
+    await sendIphoneNotification(service, notifications);
+  } else {
+    logger.info(`iPhone notifications disabled, skipping iPhone webhook notification for ${service.name}`);
   }
 }
 
@@ -947,6 +995,9 @@ app.get('/api/notifications', async (req, res) => {
       ...notifications.sms,
       accountSid: notifications.sms.accountSid ? '***' : '',
       authToken: notifications.sms.authToken ? '***' : ''
+    },
+    iphone: {
+      ...notifications.iphone
     }
   };
   
@@ -955,11 +1006,16 @@ app.get('/api/notifications', async (req, res) => {
 
 // Update notification settings
 app.put('/api/notifications', async (req, res) => {
-  const notifications = req.body;
-  logger.info('Saving notification settings');
-  await saveNotifications(notifications);
-  await initializeNotifications(); // Reinitialize transports with new settings
-  res.json({ message: 'Notification settings updated successfully' });
+  try {
+    const notifications = req.body;
+    logger.info('Saving notification settings');
+    await saveNotifications(notifications);
+    await initializeNotifications(); // Reinitialize transports with new settings
+    res.json({ message: 'Notification settings updated successfully' });
+  } catch (error) {
+    logger.error('Error saving notification settings: ' + error.message);
+    res.status(500).json({ error: 'Failed to save notification settings: ' + error.message });
+  }
 });
 
 // Test email notification
@@ -1122,6 +1178,43 @@ app.post('/api/notifications/test/sms', async (req, res) => {
   } catch (error) {
     logger.error('Error sending test SMS: ' + error.message);
     res.status(500).json({ error: 'Failed to send test SMS: ' + error.message });
+  }
+});
+
+// Test iPhone webhook notification
+app.post('/api/notifications/test/iphone', async (req, res) => {
+  const notifications = await loadNotifications();
+  
+  if (!notifications.iphone.enabled || !notifications.iphone.webhookUrl) {
+    return res.status(400).json({ error: 'iPhone notifications are not properly configured' });
+  }
+  
+  try {
+    const testPayload = {
+      title: 'Service Monitor Test',
+      text: 'This is a test notification from your Service Monitor app. If you receive this, the iPhone webhook is working correctly!',
+      input: {
+        service: 'Test Service',
+        status: 'up',
+        url: 'https://example.com',
+        responseTime: 150,
+        timestamp: new Date().toISOString()
+      }
+    };
+    
+    const response = await axios.post(notifications.iphone.webhookUrl, testPayload, {
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'ServiceMonitor/1.0'
+      },
+      timeout: 10000
+    });
+    
+    logger.info('Test iPhone webhook sent successfully, Status: ' + response.status);
+    res.json({ message: 'Test iPhone webhook sent successfully' });
+  } catch (error) {
+    logger.error('Error sending test iPhone webhook: ' + error.message);
+    res.status(500).json({ error: 'Failed to send test iPhone webhook: ' + error.message });
   }
 });
 
